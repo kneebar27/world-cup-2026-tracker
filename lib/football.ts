@@ -277,10 +277,10 @@ export function buildGroupStandingsFromMatches(rawMatches: any[]): Group[] {
     away.goalDifference = away.goalsFor - away.goalsAgainst;
   }
 
-  return [...groups.entries()]
+  return Array.from(groups.entries())
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([group, rows]) => {
-      const table = [...rows.values()].sort(
+      const table = Array.from(rows.values()).sort(
         (a, b) =>
           b.points - a.points ||
           b.goalDifference - a.goalDifference ||
