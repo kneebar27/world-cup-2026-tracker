@@ -182,6 +182,117 @@ export function isUpcoming(status: string): boolean {
   return status === "SCHEDULED" || status === "TIMED";
 }
 
+export function formatGroupName(g: string | null): string {
+  if (!g) return "Group";
+  return g
+    .replace("GROUP_", "Group ")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+// Build tables from finished group matches only. The /standings endpoint can
+// treat in-progress games as draws; match results stay accurate on native-stats.
+export function buildGroupStandingsFromMatches(rawMatches: any[]): Group[] {
+  type RowMap = Map<number, TableRow>;
+  const groups = new Map<string, RowMap>();
+
+  const ensureGroup = (label: string): RowMap => {
+    let rows = groups.get(label);
+    if (!rows) {
+      rows = new Map();
+      groups.set(label, rows);
+    }
+    return rows;
+  };
+
+  const ensureRow = (rows: RowMap, team: any): TableRow => {
+    const id = team?.id ?? 0;
+    let row = rows.get(id);
+    if (!row) {
+      row = {
+        position: 0,
+        team: {
+          id,
+          name: team?.name ?? "TBD",
+          tla: team?.tla ?? "",
+          crest: team?.crest ?? "",
+        },
+        playedGames: 0,
+        won: 0,
+        draw: 0,
+        lost: 0,
+        points: 0,
+        goalsFor: 0,
+        goalsAgainst: 0,
+        goalDifference: 0,
+      };
+      rows.set(id, row);
+    }
+    return row;
+  };
+
+  for (const m of rawMatches) {
+    if (m.stage !== "GROUP_STAGE" || !m.group) continue;
+    const label = formatGroupName(m.group);
+    const rows = ensureGroup(label);
+    ensureRow(rows, m.homeTeam);
+    ensureRow(rows, m.awayTeam);
+  }
+
+  for (const m of rawMatches) {
+    if (m.stage !== "GROUP_STAGE" || !m.group) continue;
+    if (m.status !== "FINISHED" && m.status !== "AWARDED") continue;
+
+    const homeGoals = m.score?.fullTime?.home;
+    const awayGoals = m.score?.fullTime?.away;
+    if (homeGoals == null || awayGoals == null) continue;
+
+    const rows = ensureGroup(formatGroupName(m.group));
+    const home = ensureRow(rows, m.homeTeam);
+    const away = ensureRow(rows, m.awayTeam);
+
+    home.playedGames++;
+    away.playedGames++;
+    home.goalsFor += homeGoals;
+    home.goalsAgainst += awayGoals;
+    away.goalsFor += awayGoals;
+    away.goalsAgainst += homeGoals;
+
+    if (homeGoals > awayGoals) {
+      home.won++;
+      home.points += 3;
+      away.lost++;
+    } else if (homeGoals < awayGoals) {
+      home.lost++;
+      away.won++;
+      away.points += 3;
+    } else {
+      home.draw++;
+      away.draw++;
+      home.points++;
+      away.points++;
+    }
+
+    home.goalDifference = home.goalsFor - home.goalsAgainst;
+    away.goalDifference = away.goalsFor - away.goalsAgainst;
+  }
+
+  return [...groups.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([group, rows]) => {
+      const table = [...rows.values()].sort(
+        (a, b) =>
+          b.points - a.points ||
+          b.goalDifference - a.goalDifference ||
+          b.goalsFor - a.goalsFor
+      );
+      table.forEach((row, i) => {
+        row.position = i + 1;
+      });
+      return { group, table };
+    });
+}
+
 // Server-side fetch with the secret token. Cached by the route handler.
 export async function fetchFromApi<T>(path: string): Promise<T> {
   const token = process.env.FOOTBALL_DATA_TOKEN;
